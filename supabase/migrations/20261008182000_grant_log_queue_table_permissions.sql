@@ -1,0 +1,1 @@
+grant select, insert on table pgmq.q_log_processing to service_role;

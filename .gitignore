@@ -1,0 +1,12 @@
+﻿.venv/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+supabase/.temp/
+supabase/.branches/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+demo/server.log
