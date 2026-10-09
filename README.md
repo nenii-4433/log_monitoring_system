@@ -19,10 +19,18 @@ searching logs.
   only once; stored keys are hashed.
 - Structured JSON log ingestion, with organization identity derived from the
   API key rather than supplied by the client.
+- Optional producer severity stored separately from system-predicted severity;
+  logs show `pending`, `complete`, or `failed` prediction status.
 - Organization membership-checked log search with time, severity, service, and
   environment filters and cursor pagination.
-- Asynchronous severity prediction through a local queue worker and owner-managed
-  per-organization service criticality settings.
+- Asynchronous severity prediction through a PostgreSQL `pgmq` queue and a
+  separately run worker, with bounded retries and visible failures.
+- Layered severity evaluation using deterministic rules, context signals, an
+  approved-example NLP classifier when training data is ready, and a confidence-
+  gated local Ollama LLM fallback.
+- Prediction method, confidence, and reason shown with each processed log.
+- Owner-managed, organization-specific service criticality settings used by
+  prediction context.
 - A React dashboard with organization selection, API key management, log search,
   and five-second polling for the newest results while the page is visible.
 - A demo log generator and JSON-lines file follower for local ingestion testing.
