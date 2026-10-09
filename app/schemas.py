@@ -8,7 +8,9 @@ class LogEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timestamp: datetime
-    severity: Literal["trace", "debug", "info", "warning", "error", "critical"]
+    severity: (
+        Literal["trace", "debug", "info", "warning", "error", "critical"] | None
+    ) = None
     service: str = Field(min_length=1, max_length=120)
     message: str = Field(min_length=1)
     environment: str | None = Field(default=None, min_length=1, max_length=120)

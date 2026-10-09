@@ -26,9 +26,14 @@ from app.schemas import LogEvent
 app = FastAPI(title="Log Monitoring API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 _api_key_bearer = HTTPBearer(auto_error=False)
@@ -89,6 +94,27 @@ class CreateOrganizationRequest(BaseModel):
     def name_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("Organization name must not be blank")
+        return value
+
+
+class ServiceCriticalityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: str = Field(min_length=1, max_length=120)
+    criticality: str
+
+    @field_validator("service")
+    @classmethod
+    def service_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Service must not be blank")
+        return value.strip()
+
+    @field_validator("criticality")
+    @classmethod
+    def criticality_must_be_allowed(cls, value: str) -> str:
+        if value not in {"low", "normal", "high", "critical"}:
+            raise ValueError("Invalid service criticality")
         return value
 
 
@@ -246,6 +272,142 @@ async def list_organizations(
         )
 
     return {"items": items}
+
+
+@app.get("/v1/organizations/{organization_id}/service-criticalities")
+async def list_service_criticalities(
+    organization_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, list[dict[str, str]]]:
+    settings = get_settings()
+    url = (
+        f"{settings.supabase_url.rstrip('/')}/rest/v1/rpc/"
+        "get_service_criticalities"
+    )
+    headers = {
+        "apikey": settings.supabase_secret_key,
+        "Authorization": f"Bearer {settings.supabase_secret_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json={
+                    "p_user_id": user.id,
+                    "p_organization_id": str(organization_id),
+                },
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service settings unavailable",
+        ) from exc
+
+    if response.status_code == status.HTTP_403_FORBIDDEN:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+    if response.status_code != status.HTTP_200_OK:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service settings unavailable",
+        )
+
+    try:
+        rows = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invalid response from service settings",
+        ) from exc
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("service"), str)
+        or not isinstance(row.get("criticality"), str)
+        or row["criticality"] not in {"low", "normal", "high", "critical"}
+        for row in rows
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invalid response from service settings",
+        )
+    return {"items": rows}
+
+
+@app.put(
+    "/v1/organizations/{organization_id}/service-criticalities",
+)
+async def set_service_criticality(
+    organization_id: UUID,
+    request: ServiceCriticalityRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, str]:
+    settings = get_settings()
+    url = (
+        f"{settings.supabase_url.rstrip('/')}/rest/v1/rpc/"
+        "set_service_criticality"
+    )
+    headers = {
+        "apikey": settings.supabase_secret_key,
+        "Authorization": f"Bearer {settings.supabase_secret_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json={
+                    "p_user_id": user.id,
+                    "p_organization_id": str(organization_id),
+                    "p_service": request.service,
+                    "p_criticality": request.criticality,
+                },
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service settings unavailable",
+        ) from exc
+
+    if response.status_code == status.HTTP_403_FORBIDDEN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only organization owners can change service criticality",
+        )
+    if response.status_code != status.HTTP_200_OK:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service settings unavailable",
+        )
+
+    try:
+        rows = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invalid response from service settings",
+        ) from exc
+    if (
+        not isinstance(rows, list)
+        or len(rows) != 1
+        or not isinstance(rows[0], dict)
+        or rows[0].get("service") != request.service
+        or rows[0].get("criticality") != request.criticality
+        or not isinstance(rows[0].get("updated_at"), str)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invalid response from service settings",
+        )
+    return {
+        "service": rows[0]["service"],
+        "criticality": rows[0]["criticality"],
+        "updated_at": rows[0]["updated_at"],
+    }
 
 
 @app.delete(
@@ -592,7 +754,6 @@ async def search_logs(
         "id",
         "event_timestamp",
         "received_at",
-        "severity",
         "service",
         "message",
     )
@@ -600,6 +761,56 @@ async def search_logs(
     for row in rows[:limit]:
         if not isinstance(row, dict) or not all(
             isinstance(row.get(field), str) for field in expected_string_fields
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Invalid response from log search service",
+            )
+
+        row_severity = row.get("severity")
+        row_source_severity = row.get("source_severity")
+        prediction_status = row.get("prediction_status")
+        prediction_reason = row.get("prediction_reason")
+        prediction_method = row.get("prediction_method")
+        prediction_error = row.get("prediction_error")
+        if (
+            row_severity is not None
+            and not isinstance(row_severity, str)
+        ) or (
+            row_source_severity is not None
+            and not isinstance(row_source_severity, str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Invalid response from log search service",
+            )
+        if prediction_status not in {"pending", "complete", "failed"}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Invalid response from log search service",
+            )
+        if (
+            prediction_reason is not None
+            and not isinstance(prediction_reason, str)
+        ) or (
+            prediction_method is not None
+            and not isinstance(prediction_method, str)
+        ) or (
+            prediction_error is not None
+            and not isinstance(prediction_error, str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Invalid response from log search service",
+            )
+        confidence = row.get("prediction_confidence")
+        if (
+            confidence is not None
+            and (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not 0.0 <= confidence <= 1.0
+            )
         ):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -632,7 +843,13 @@ async def search_logs(
                 "id": row["id"],
                 "timestamp": row["event_timestamp"],
                 "received_at": row["received_at"],
-                "severity": row["severity"],
+                "severity": row_severity,
+                "source_severity": row_source_severity,
+                "prediction_status": prediction_status,
+                "prediction_confidence": confidence,
+                "prediction_reason": prediction_reason,
+                "prediction_method": prediction_method,
+                "prediction_error": prediction_error,
                 "service": row["service"],
                 "environment": row_environment,
                 "message": row["message"],

@@ -152,9 +152,11 @@ Each individual event is a JSON object with these fields:
 }
 ```
 
-- Required: `timestamp` (ISO 8601), `severity`, `service`, and `message`.
-- Allowed severity values: `trace`, `debug`, `info`, `warning`, `error`, `critical`.
-- Optional: `environment` and `attributes` (JSON object).
+- Required: `timestamp` (ISO 8601), `service`, and `message`.
+- Optional: `severity` (sender-provided hint), `environment`, and `attributes`
+  (JSON object).
+- Allowed sender severity values: `trace`, `debug`, `info`, `warning`, `error`,
+  `critical`.
 - Maximum serialized event size: 256 KB.
 - The v1 API accepts one event per request. Batch ingestion is deferred until
   limits and partial-failure behavior are specified.
@@ -167,7 +169,10 @@ Authentication: organization API key in the Bearer authorization header.
 
 The server validates the event, checks key status, derives the organization only
 from the key record, and atomically stores the log and its processing queue
-message.
+message. The sender's optional severity is stored separately as
+`source_severity`. The response/search field `severity` is reserved for the
+system prediction and remains `null` until the background prediction worker
+processes the queued log.
 
 Pilot quota and rate-limit enforcement is not implemented in the first ingestion
 increment. Do not treat this endpoint as production-ready until agreed limits and
@@ -221,7 +226,13 @@ Success: `200 OK`
       "id": "log-uuid",
       "timestamp": "2026-10-08T09:30:00Z",
       "received_at": "2026-10-08T09:30:01Z",
-      "severity": "error",
+      "severity": null,
+      "source_severity": "warning",
+      "prediction_status": "pending",
+      "prediction_confidence": null,
+      "prediction_reason": null,
+      "prediction_method": null,
+      "prediction_error": null,
       "service": "checkout",
       "environment": "production",
       "message": "Payment provider timed out",
@@ -238,6 +249,25 @@ The API calls `search_logs_for_member` with its server-side database credential.
 That function must verify the authenticated user's membership before returning
 logs; filtering by `organization_id` alone is not an authorization control, and
 the privileged server credential means RLS alone does not protect this request.
+The `severity` response field and severity filter refer to the system prediction;
+`source_severity` is the optional value sent by the log producer.
+Each search result also includes `prediction_status` (`pending`, `complete`, or
+`failed`), nullable `prediction_confidence`, `prediction_reason`, and
+`prediction_error`.
+
+### Organization service criticality
+
+`GET /v1/organizations/{organization_id}/service-criticalities` returns the
+services configured for the organization and their `low`, `normal`, `high`, or
+`critical` importance. Any organization member may view settings. Owners can
+create or update one using `PUT` with `{"service":"payments","criticality":"high"}`.
+The worker treats services without a setting as `normal`.
+
+The severity worker reads queued events, computes organization-scoped context,
+and updates prediction metadata asynchronously. Run it separately from the API
+with `python -m app.severity_worker`. It uses the local Ollama URL/model settings
+(`OLLAMA_URL` and `OLLAMA_MODEL`); uncertain predictions are retried up to three
+times before being marked `failed`. It does not send log content to a hosted LLM.
 Return the same not-found response for inaccessible organization IDs; do not
 disclose whether another organization's ID exists.
 
@@ -260,8 +290,7 @@ Success: `200 OK`
 
 - Invitations and adding organization members.
 - Batch ingestion and partial success.
-- Error-group and NLP endpoints.
-- LLM explanations and natural-language search.
+- Error-group endpoints and natural-language search.
 - Alert rules and delivery status.
 - Billing and payments.
 - Exact quota plan definitions and quota-reset behavior.

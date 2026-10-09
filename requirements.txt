@@ -3,3 +3,4 @@ uvicorn[standard]
 httpx
 pytest
 python-dotenv
+scikit-learn

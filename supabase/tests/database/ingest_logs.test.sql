@@ -1,6 +1,6 @@
 begin;
 
-select plan(8);
+select plan(9);
 
 insert into auth.users (
     id,
@@ -108,6 +108,16 @@ select is(
     ),
     'e0000000-0000-4000-8000-000000000001'::uuid,
     'log tenant is derived from the API key'
+);
+
+select is(
+    (
+        select source_severity || ':' || coalesce(severity, 'pending')
+        from public.logs
+        where message = 'valid ingestion test message'
+    ),
+    'error:pending',
+    'source severity is retained separately while prediction is pending'
 );
 
 select ok(

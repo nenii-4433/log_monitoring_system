@@ -92,6 +92,68 @@ def test_ingest_log_sends_hashed_key_and_returns_acceptance(
     assert api_key not in json.dumps(captured_payload)
 
 
+def test_ingest_log_accepts_missing_source_severity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_payload: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> list[dict[str, str]]:
+            return [
+                {
+                    "id": "log-456",
+                    "accepted_at": "2026-10-08T09:30:01+00:00",
+                }
+            ]
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            headers: dict[str, str],
+            json: dict[str, object],
+        ) -> FakeResponse:
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        main,
+        "get_settings",
+        lambda: Settings(
+            supabase_url="http://127.0.0.1:54321",
+            supabase_publishable_key="test-publishable",
+            supabase_secret_key="test-secret",
+        ),
+    )
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/logs",
+            headers={"Authorization": "Bearer lm_this-is-a-long-test-api-key"},
+            json={
+                "timestamp": "2026-10-08T09:30:00Z",
+                "service": "checkout",
+                "message": "Payment provider timed out",
+            },
+        )
+
+    assert response.status_code == 202
+    assert captured_payload["p_severity"] is None
+
+
 def test_ingest_log_rejects_missing_or_malformed_api_key() -> None:
     event = {
         "timestamp": "2026-10-08T09:30:00Z",
@@ -227,7 +289,6 @@ def test_openapi_documents_log_event_request_body() -> None:
     assert body_schema["additionalProperties"] is False
     assert set(body_schema["required"]) == {
         "timestamp",
-        "severity",
         "service",
         "message",
     }

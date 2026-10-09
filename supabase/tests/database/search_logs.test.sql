@@ -1,6 +1,6 @@
 begin;
 
-select plan(8);
+select plan(9);
 
 insert into auth.users (
     id,
@@ -57,6 +57,7 @@ insert into public.logs (
     organization_id,
     event_timestamp,
     severity,
+    source_severity,
     service,
     environment,
     message,
@@ -68,6 +69,7 @@ values
         '12000000-0000-4000-8000-000000000001',
         '2026-10-08T11:00:00Z',
         'error',
+        'warning',
         'checkout',
         'production',
         'search test error one',
@@ -77,6 +79,7 @@ values
         '13000000-0000-4000-8000-000000000002',
         '12000000-0000-4000-8000-000000000001',
         '2026-10-08T10:00:00Z',
+        'warning',
         'warning',
         'checkout',
         'production',
@@ -88,6 +91,7 @@ values
         '12000000-0000-4000-8000-000000000001',
         '2026-10-08T09:00:00Z',
         'error',
+        'error',
         'worker',
         'staging',
         'search test error two',
@@ -97,6 +101,7 @@ values
         '13000000-0000-4000-8000-000000000004',
         '12000000-0000-4000-8000-000000000002',
         '2026-10-08T12:00:00Z',
+        'critical',
         'critical',
         'payments',
         'production',
@@ -149,6 +154,19 @@ select is(
     ),
     1,
     'severity, service, and environment filters are applied together'
+);
+
+select is(
+    (
+        select source_severity
+        from public.search_logs_for_member(
+            '11000000-0000-4000-8000-000000000001',
+            '12000000-0000-4000-8000-000000000001'
+        )
+        where id = '13000000-0000-4000-8000-000000000001'
+    ),
+    'warning',
+    'search returns source severity separately from predicted severity'
 );
 
 select is(

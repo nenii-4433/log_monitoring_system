@@ -9,6 +9,9 @@ class Settings:
     supabase_url: str
     supabase_publishable_key: str
     supabase_secret_key: str
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen3:4b"
+    severity_worker_poll_seconds: float = 2.0
 
 
 def get_settings() -> Settings:
@@ -35,4 +38,9 @@ def get_settings() -> Settings:
         supabase_url=supabase_url,
         supabase_publishable_key=publishable_key,
         supabase_secret_key=secret_key,
+        ollama_url=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
+        severity_worker_poll_seconds=float(
+            os.getenv("SEVERITY_WORKER_POLL_SECONDS", "2")
+        ),
     )

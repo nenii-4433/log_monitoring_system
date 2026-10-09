@@ -8,6 +8,7 @@ import {
   type LogEntry,
   type LogSearchResponse,
   type Organization,
+  type ServiceCriticality,
 } from "./lib/api";
 import { supabase } from "./lib/supabase";
 
@@ -25,6 +26,10 @@ function toIsoOrEmpty(value: string): string {
   return value ? new Date(value).toISOString() : "";
 }
 
+function isCriticality(value: string): value is ServiceCriticality["criticality"] {
+  return ["low", "normal", "high", "critical"].some((criticality) => criticality === value);
+}
+
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -39,6 +44,10 @@ function App() {
   const [organizationName, setOrganizationName] = useState("");
   const [organizationLoading, setOrganizationLoading] = useState(false);
   const [showOrganizationForm, setShowOrganizationForm] = useState(false);
+  const [serviceCriticalities, setServiceCriticalities] = useState<ServiceCriticality[]>([]);
+  const [criticalityService, setCriticalityService] = useState("");
+  const [criticalityValue, setCriticalityValue] = useState<ServiceCriticality["criticality"]>("normal");
+  const [criticalityLoading, setCriticalityLoading] = useState(false);
 
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [newKeyName, setNewKeyName] = useState("");
@@ -145,6 +154,28 @@ function App() {
       setPageError(error instanceof Error ? error.message : "Could not load API keys.");
     });
   }, [accessToken, loadApiKeys, selectedOrganization]);
+
+  const loadServiceCriticalities = useCallback(async () => {
+    if (!accessToken || !selectedOrganization) {
+      setServiceCriticalities([]);
+      return;
+    }
+    const result = await apiRequest<{ items: ServiceCriticality[] }>(
+      `/v1/organizations/${selectedOrganization.id}/service-criticalities`,
+      accessToken,
+    );
+    setServiceCriticalities(result.items);
+  }, [accessToken, selectedOrganization]);
+
+  useEffect(() => {
+    if (!selectedOrganization || !accessToken) {
+      setServiceCriticalities([]);
+      return;
+    }
+    void loadServiceCriticalities().catch((error: unknown) => {
+      setPageError(error instanceof Error ? error.message : "Could not load service settings.");
+    });
+  }, [accessToken, loadServiceCriticalities, selectedOrganization]);
 
   const searchLogs = useCallback(
     async (cursor: string | null = null, quiet = false) => {
@@ -329,6 +360,33 @@ function App() {
       setPageNotice(`API key "${key.name}" revoked.`);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Could not revoke API key.");
+    }
+  }
+
+  async function handleSaveServiceCriticality(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken || !selectedOrganization || !criticalityService.trim()) return;
+    setCriticalityLoading(true);
+    setPageError("");
+    try {
+      await apiRequest<ServiceCriticality>(
+        `/v1/organizations/${selectedOrganization.id}/service-criticalities`,
+        accessToken,
+        {
+          method: "PUT",
+          body: {
+            service: criticalityService.trim(),
+            criticality: criticalityValue,
+          },
+        },
+      );
+      setPageNotice(`Saved criticality for ${criticalityService.trim()}.`);
+      setCriticalityService("");
+      await loadServiceCriticalities();
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Could not save service settings.");
+    } finally {
+      setCriticalityLoading(false);
     }
   }
 
@@ -642,12 +700,36 @@ function App() {
                     <tbody>
                       {logs.map((log) => (
                         <tr key={log.id}>
-                          <td><span className={`severity severity-${log.severity}`}>{log.severity}</span></td>
+                          <td>
+                            <span className={`severity severity-${log.severity ?? (log.prediction_status === "failed" ? "error" : "pending")}`}>
+                              {log.severity ?? log.prediction_status}
+                            </span>
+                            <small className="source-severity">
+                              source: {log.source_severity ?? "not provided"}
+                            </small>
+                            {log.prediction_confidence !== null && (
+                              <small className="source-severity">
+                                confidence: {Math.round(log.prediction_confidence * 100)}%
+                              </small>
+                            )}
+                          </td>
                           <td className="timestamp-cell">{formatDate(log.timestamp)}</td>
                           <td className="service-cell">{log.service}</td>
                           <td>{log.environment ?? "—"}</td>
                           <td className="message-cell">
                             <span>{log.message}</span>
+                            {(log.prediction_method || log.prediction_reason || log.prediction_error) && (
+                              <details>
+                                <summary>prediction details</summary>
+                                {log.prediction_method && (
+                                  <p>Method: {log.prediction_method}</p>
+                                )}
+                                {log.prediction_reason && <p>{log.prediction_reason}</p>}
+                                {log.prediction_error && (
+                                  <p className="prediction-error">{log.prediction_error}</p>
+                                )}
+                              </details>
+                            )}
                             {log.attributes && Object.keys(log.attributes).length > 0 && (
                               <details>
                                 <summary>attributes</summary>
@@ -686,6 +768,69 @@ function App() {
                     </button>
                   </div>
                 </footer>
+              </section>
+
+              <section className="keys-card service-settings-card">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">PREDICTION CONTEXT</p>
+                    <h2>Service criticality</h2>
+                  </div>
+                  <span className="muted small-copy">Unconfigured services use normal</span>
+                </div>
+                <p className="muted small-copy">
+                  Set how important each service is to this organization. The prediction worker
+                  uses this as context; it does not override log evidence by itself.
+                </p>
+                {serviceCriticalities.length > 0 && (
+                  <div className="criticality-list">
+                    {serviceCriticalities.map((setting) => (
+                      <div className="criticality-row" key={setting.service}>
+                        <strong>{setting.service}</strong>
+                        <span className={`criticality-pill criticality-${setting.criticality}`}>
+                          {setting.criticality}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {selectedOrganization?.role === "owner" ? (
+                  <form
+                    className="criticality-form"
+                    onSubmit={(event) => void handleSaveServiceCriticality(event)}
+                  >
+                    <label>
+                      Service name
+                      <input
+                        value={criticalityService}
+                        onChange={(event) => setCriticalityService(event.target.value)}
+                        maxLength={120}
+                        required
+                        placeholder="e.g. payments"
+                      />
+                    </label>
+                    <label>
+                      Importance
+                      <select
+                        value={criticalityValue}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (isCriticality(value)) setCriticalityValue(value);
+                        }}
+                      >
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    </label>
+                    <button className="button button-primary" disabled={criticalityLoading}>
+                      {criticalityLoading ? "Saving…" : "Save service"}
+                    </button>
+                  </form>
+                ) : (
+                  <p className="muted small-copy">Only organization owners can change these settings.</p>
+                )}
               </section>
 
               <section className="keys-card" id="keys">

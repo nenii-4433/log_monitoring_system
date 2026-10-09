@@ -18,6 +18,16 @@ def test_validate_event_line_accepts_log_event() -> None:
     assert validate_event_line(json.dumps(event).encode(), 4) == event
 
 
+def test_validate_event_line_accepts_event_without_source_severity() -> None:
+    event = {
+        "timestamp": "2026-10-08T18:30:00Z",
+        "service": "payments",
+        "message": "Payment provider timed out",
+    }
+
+    assert validate_event_line(json.dumps(event).encode(), 4) == event
+
+
 @pytest.mark.parametrize(
     ("line", "message"),
     [

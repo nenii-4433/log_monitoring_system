@@ -20,6 +20,18 @@ def test_accepts_valid_log_event() -> None:
     assert event.timestamp.utcoffset() is not None
 
 
+def test_accepts_log_event_without_source_severity() -> None:
+    event = LogEvent.model_validate(
+        {
+            "timestamp": "2026-10-08T09:30:00Z",
+            "service": "checkout",
+            "message": "Payment provider timed out",
+        }
+    )
+
+    assert event.severity is None
+
+
 def test_rejects_timestamp_without_timezone() -> None:
     with pytest.raises(ValidationError):
         LogEvent.model_validate(

@@ -19,11 +19,23 @@ export interface LogEntry {
   id: string;
   timestamp: string;
   received_at: string;
-  severity: "trace" | "debug" | "info" | "warning" | "error" | "critical";
+  severity: "trace" | "debug" | "info" | "warning" | "error" | "critical" | null;
+  source_severity: "trace" | "debug" | "info" | "warning" | "error" | "critical" | null;
+  prediction_status: "pending" | "complete" | "failed";
+  prediction_confidence: number | null;
+  prediction_reason: string | null;
+  prediction_method: string | null;
+  prediction_error: string | null;
   service: string;
   environment: string | null;
   message: string;
   attributes: Record<string, unknown> | null;
+}
+
+export interface ServiceCriticality {
+  service: string;
+  criticality: "low" | "normal" | "high" | "critical";
+  updated_at?: string;
 }
 
 export interface LogSearchResponse {
@@ -32,7 +44,7 @@ export interface LogSearchResponse {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
 }
